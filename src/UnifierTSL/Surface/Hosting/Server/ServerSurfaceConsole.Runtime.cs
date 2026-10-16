@@ -15,14 +15,23 @@ public abstract partial class ServerSurfaceConsole
     private ServerConsoleReadScope? consoleReadScope;
     private StatusProjectionRuntime? statusRuntime;
     private bool runtimeInitialized;
-    private ConsoleColor cachedBackgroundColor = System.Console.BackgroundColor;
-    private ConsoleColor cachedForegroundColor = System.Console.ForegroundColor;
-    private Encoding cachedInputEncoding = System.Console.InputEncoding;
-    private Encoding cachedOutputEncoding = System.Console.OutputEncoding;
-    private int cachedWindowHeight = System.Console.WindowHeight;
-    private int cachedWindowLeft = System.Console.WindowLeft;
-    private int cachedWindowTop = System.Console.WindowTop;
-    private int cachedWindowWidth = System.Console.WindowWidth;
+    private ConsoleColor cachedBackgroundColor = SafeConsole(() => System.Console.BackgroundColor, ConsoleColor.Black);
+    private ConsoleColor cachedForegroundColor = SafeConsole(() => System.Console.ForegroundColor, ConsoleColor.Gray);
+    private Encoding cachedInputEncoding = SafeConsole(() => System.Console.InputEncoding, Encoding.UTF8);
+    private Encoding cachedOutputEncoding = SafeConsole(() => System.Console.OutputEncoding, Encoding.UTF8);
+    private int cachedWindowHeight = SafeConsole(() => System.Console.WindowHeight, 30);
+    private int cachedWindowLeft = SafeConsole(() => System.Console.WindowLeft, 0);
+    private int cachedWindowTop = SafeConsole(() => System.Console.WindowTop, 0);
+    private int cachedWindowWidth = SafeConsole(() => System.Console.WindowWidth, 120);
+
+    /// <summary>
+    /// 没有真实控制台时（stdout 被重定向、或以无控制台方式启动）这些 Console API 会抛 IOException。
+    /// 以前这会连带把 TShock 的静态构造搞挂 —— 实测 20 个插件里 16 个初始化失败（含 VirtualWorldCore/尘歌壶）。
+    /// 现在退回默认值：服务端可以在"无控制台 + 重定向 stdout"的方式下运行，便于被管理器 agent 托管并抓取输出。
+    /// </summary>
+    private static T SafeConsole<T>(Func<T> get, T fallback) {
+        try { return get(); } catch { return fallback; }
+    }
     private string cachedTitle = string.Empty;
 
     public virtual bool HasActiveSurfaceActivity => StatusRuntime.HasActiveActivity;
