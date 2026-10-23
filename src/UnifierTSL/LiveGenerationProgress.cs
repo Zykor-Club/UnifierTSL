@@ -70,12 +70,82 @@ namespace UnifierTSL
                     double pct = 0;
                     try { pct = _progress?.TotalProgress ?? 0; } catch { }
                     Write(stage, pct, done: false);
+                    WriteFrame(root);
                 }
                 catch { }
                 Thread.Sleep(500);
             }
         }
 
+        private static DateTime _lastFrame = DateTime.MinValue;
+
+        /// <summary>
+        /// 写一帧缩略图：每 2 s 一次，<c>live\frame.bin</c>。
+        /// 格式（小端）：int32 magic('UTWF'=0x46575455) · int32 w · int32 h · ushort[w*h]
+        /// 每个 ushort：bit15=1 表示是墙（值是墙 id），否则是图格 id；0 = 空（天空/无）
+        /// 尺寸上限照社区那份协议的 200 万像素走，这里取 1200×240 = 28.8 万，够看形状又不拖慢生成。
+        /// </summary>
+        private static void WriteFrame(UnifiedServerProcess.RootContext? root)
+        {
+            if (root is null) { return; }
+            var now = DateTime.UtcNow;
+            if ((now - _lastFrame).TotalMilliseconds < 2000) { return; }
+            _lastFrame = now;
+
+            try
+            {
+                var tiles = root.Main.tile;
+                if (tiles is null) { return; }
+                int W = tiles.Width, H = tiles.Height;
+                if (W <= 0 || H <= 0) { return; }
+
+                const int OutW = 1200;                        // 输出宽（像素）
+                int stepX = Math.Max(1, W / OutW);
+                int outW = Math.Min(OutW, W / stepX);
+                int stepY = stepX;                              // 等比，保证不变形
+                int outH = Math.Max(1, H / stepY);
+
+                var px = new ushort[outW * outH];
+                for (int y = 0; y < outH; y++)
+                {
+                    int sy = Math.Min(H - 1, y * stepY);
+                    int row = y * outW;
+                    for (int x = 0; x < outW; x++)
+                    {
+                        int sx = Math.Min(W - 1, x * stepX);
+                        ref var td = ref tiles[sx, sy];
+                        if (td.type != 0 && td.type != ushort.MaxValue) { px[row + x] = td.type; }
+                        else if (td.wall != 0) { px[row + x] = (ushort)(0x8000 | td.wall); }
+                        else { px[row + x] = 0; }
+                    }
+                }
+
+                string? prog = OutPath;
+                if (prog is null) { return; }
+                string path = Path.Combine(Path.GetDirectoryName(prog)!, "frame.bin");
+                string tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                using (var bw = new BinaryWriter(fs))
+                {
+                    bw.Write(0x46575455);   // 'UTWF'
+                    bw.Write(outW);
+                    bw.Write(outH);
+                    foreach (var v in px) { bw.Write(v); }
+                }
+                for (int i = 0; i < 6; i++)
+                {
+                    try
+                    {
+                        if (File.Exists(path)) { File.Replace(tmp, path, null); } else { File.Move(tmp, path); }
+                        return;
+                    }
+                    catch (IOException) { Thread.Sleep(8 * (i + 1)); }
+                    catch (UnauthorizedAccessException) { Thread.Sleep(8 * (i + 1)); }
+                }
+                try { File.Delete(tmp); } catch { }
+            }
+            catch { }
+        }
         private static void Write(string stage, double pct, bool done)
         {
             string? path = OutPath;
