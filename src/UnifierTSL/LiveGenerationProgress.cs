@@ -127,7 +127,7 @@ namespace UnifierTSL
                     {
                         int sx = Math.Min(W - 1, x * stepX);
                         // 2×2 取样 + 优先级（图格 > 墙 > 空）：单点取样会把细地形采成麻点
-                        ushort pick = 0; ushort wallPick = 0;
+                        ushort pick = 0; ushort wallPick = 0; ushort liquidPick = 0;
                         for (int dy = 0; dy < 2 && pick == 0; dy++)
                         {
                             int yy = Math.Min(H - 1, sy + dy * Math.Max(1, stepY / 2));
@@ -136,10 +136,11 @@ namespace UnifierTSL
                                 int xx = Math.Min(W - 1, sx + dx * Math.Max(1, stepX / 2));
                                 ref var td = ref tiles[xx, yy];
                                 if (td.type != 0 && td.type != ushort.MaxValue) { pick = td.type; break; }
+                                if (td.liquid > 0 && liquidPick == 0) { liquidPick = (ushort)(0x4000 | (td.liquidType() & 0x0F)); }
                                 if (td.wall != 0 && wallPick == 0) { wallPick = (ushort)(0x8000 | td.wall); }
                             }
                         }
-                        px[row + x] = pick != 0 ? pick : wallPick;
+                        px[row + x] = pick != 0 ? pick : (liquidPick != 0 ? liquidPick : wallPick);
                     }
                 }
 
@@ -177,12 +178,16 @@ namespace UnifierTSL
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 string tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                int surface = 0, rock = 0;
+                try { surface = (int)(_root?.Main.worldSurface ?? 0); rock = (int)(_root?.Main.rockLayer ?? 0); } catch { }
                 string json = JsonSerializer.Serialize(new
                 {
                     stage,
                     pct = Math.Round(Math.Clamp(pct, 0, 1), 4),
                     ts = DateTimeOffset.Now.ToString("O"),
                     done,
+                    surface,
+                    rock,
                 });
                 File.WriteAllText(tmp, json);
                 for (int i = 0; i < 6; i++)
