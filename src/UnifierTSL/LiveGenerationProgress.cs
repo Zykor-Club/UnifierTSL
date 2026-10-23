@@ -70,7 +70,7 @@ namespace UnifierTSL
                     double pct = 0;
                     try { pct = _progress?.TotalProgress ?? 0; } catch { }
                     Write(stage, pct, done: false);
-                    WriteFrame(root);
+                    WriteFrame(root);   // 托管 TileCollection，读脏数据最多一帧花，不会崩进程
                 }
                 catch { }
                 Thread.Sleep(500);
@@ -78,7 +78,20 @@ namespace UnifierTSL
         }
 
         private static DateTime _lastFrame = DateTime.MinValue;
+        private static DateTime _lastFrameAt = DateTime.MinValue;
 
+        /// <summary>
+        /// 由生成线程在"某个 pass 完成"时调用（同线程，不会和生成读写抢 TileCollection 的底层内存）。
+        /// 自己节流到 2 s 一次。
+        /// </summary>
+        public static void SampleFrame(UnifiedServerProcess.RootContext? root)
+        {
+            if (root is null) { return; }
+            var now = DateTime.UtcNow;
+            if ((now - _lastFrameAt).TotalMilliseconds < 1000) { return; }
+            _lastFrameAt = now;
+            WriteFrame(root);
+        }
         /// <summary>
         /// 写一帧缩略图：每 2 s 一次，<c>live\frame.bin</c>。
         /// 格式（小端）：int32 magic('UTWF'=0x46575455) · int32 w · int32 h · ushort[w*h]
@@ -99,7 +112,7 @@ namespace UnifierTSL
                 int W = tiles.Width, H = tiles.Height;
                 if (W <= 0 || H <= 0) { return; }
 
-                const int OutW = 1200;                        // 输出宽（像素）
+                const int OutW = 2400;                        // 输出宽（像素）；2400×480 ≈ 115 万，仍在 200 万上限内
                 int stepX = Math.Max(1, W / OutW);
                 int outW = Math.Min(OutW, W / stepX);
                 int stepY = stepX;                              // 等比，保证不变形
@@ -113,10 +126,20 @@ namespace UnifierTSL
                     for (int x = 0; x < outW; x++)
                     {
                         int sx = Math.Min(W - 1, x * stepX);
-                        ref var td = ref tiles[sx, sy];
-                        if (td.type != 0 && td.type != ushort.MaxValue) { px[row + x] = td.type; }
-                        else if (td.wall != 0) { px[row + x] = (ushort)(0x8000 | td.wall); }
-                        else { px[row + x] = 0; }
+                        // 2×2 取样 + 优先级（图格 > 墙 > 空）：单点取样会把细地形采成麻点
+                        ushort pick = 0; ushort wallPick = 0;
+                        for (int dy = 0; dy < 2 && pick == 0; dy++)
+                        {
+                            int yy = Math.Min(H - 1, sy + dy * Math.Max(1, stepY / 2));
+                            for (int dx = 0; dx < 2; dx++)
+                            {
+                                int xx = Math.Min(W - 1, sx + dx * Math.Max(1, stepX / 2));
+                                ref var td = ref tiles[xx, yy];
+                                if (td.type != 0 && td.type != ushort.MaxValue) { pick = td.type; break; }
+                                if (td.wall != 0 && wallPick == 0) { wallPick = (ushort)(0x8000 | td.wall); }
+                            }
+                        }
+                        px[row + x] = pick != 0 ? pick : wallPick;
                     }
                 }
 
