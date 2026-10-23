@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -119,9 +119,28 @@ namespace UnifierTSL
             CommandingBootstrap.Install();
 
             pluginHosts = new();
-            PluginHosts.InitializeAllAsync()
-                .GetAwaiter()
-                .GetResult();
+            try
+            {
+                PluginHosts.InitializeAllAsync()
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch (Exception ex)
+            {
+                // ★ 本地 fork 补丁（2026-10-24）：插件"发现/初始化"失败原本只会打在控制台上，
+                //   窗口一关就没了，排查"服务端起不来"几乎无从下手。这里把完整异常写进
+                //   logs\plugin-init-failure.log（同时进业务日志），再照原样抛出。
+                try { Logger.Error("[PluginInit] 插件初始化失败: " + ex); } catch { }
+                try
+                {
+                    string dir = Path.Combine(AppContext.BaseDirectory, "logs");
+                    Directory.CreateDirectory(dir);
+                    File.AppendAllText(Path.Combine(dir, "plugin-init-failure.log"),
+                        DateTimeOffset.Now.ToString("O") + Environment.NewLine + ex + Environment.NewLine + Environment.NewLine);
+                }
+                catch { }
+                throw;
+            }
 
             // Keep the bootstrap host unless a custom replacement is explicitly provided.
             // Recreating the default host here would orphan any in-flight launcher activity footer.
